@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AirScript — Holographic Air Writing</title>
+    <meta name="description" content="Write in the air using hand gestures tracked by your webcam. A futuristic holographic air writing experience.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* ===== CSS VARIABLES ===== */
+        :root {
+            --bg-dark: #06060e;
+            --glass-bg: rgba(12, 12, 24, 0.82);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-highlight: rgba(255, 255, 255, 0.04);
+            --accent-cyan: #00f5ff;
+            --accent-pink: #ff2d95;
+            --accent-purple: #8b5cf6;
+            --accent-gold: #ffd700;
+            --text-primary: #e8e8f0;
+            --text-secondary: #6b6b80;
+            --panel-width: 280px;
+            --radius: 14px;
+            --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* ===== RESET & BASE ===== */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            cursor: default;
+            user-select: none;
+        }
+
+        /* ===== LOADING SCREEN ===== */
+        #loadingScreen {
+            position: fixed; inset: 0; z-index: 9999;
+            background: var(--bg-dark);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            transition: opacity 0.6s ease, visibility 0.6s ease;
+        }
+        #loadingScreen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+        #loadingScreen h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 3rem; font-weight: 900;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple), var(--accent-pink));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: loadPulse 2s ease-in-out infinite;
+        }
+        #loadingScreen p {
+            margin-top: 1rem; color: var(--text-secondary);
+            font-size: 0.9rem; letter-spacing: 2px; text-transform: uppercase;
+        }
+        .loader-bar {
+            margin-top: 2rem; width: 200px; height: 3px;
+            background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden;
+        }
+        .loader-bar::after {
+            content: ''; display: block; width: 40%; height: 100%;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            border-radius: 4px;
+            animation: loaderSlide 1.2s ease-in-out infinite;
+        }
+        @keyframes loaderSlide {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(350%); }
+        }
+        @keyframes loadPulse {
+            0%, 100% { opacity: 1; filter: brightness(1); }
+            50% { opacity: 0.7; filter: brightness(1.3); }
+        }
+
+        /* ===== ERROR OVERLAY ===== */
+        #errorOverlay {
+            position: fixed; inset: 0; z-index: 10000;
+            background: rgba(6, 6, 14, 0.95);
+            display: none; flex-direction: column;
+            align-items: center; justify-content: center;
+            text-align: center; padding: 2rem;
+        }
+        #errorOverlay.show { display: flex; }
+        #errorOverlay .error-icon { font-size: 4rem; margin-bottom: 1rem; }
+        #errorOverlay h2 {
+            font-family: 'Orbitron', sans-serif; font-size: 1.5rem;
+            color: var(--accent-pink); margin-bottom: 0.5rem;
+        }
+        #errorOverlay p { color: var(--text-secondary); margin-bottom: 1.5rem; max-width: 400px; line-height: 1.6; }
+        #retryBtn {
+            padding: 12px 32px; border: 1px solid var(--accent-cyan);
+            background: rgba(0, 245, 255, 0.1); color: var(--accent-cyan);
+            font-family: 'Orbitron', sans-serif; font-size: 0.85rem;
+            border-radius: 8px; cursor: pointer; letter-spacing: 1px;
+            transition: var(--transition);
+        }
+        #retryBtn:hover { background: rgba(0, 245, 255, 0.2); box-shadow: 0 0 20px rgba(0, 245, 255, 0.3); }
+
+        /* ===== VIEWPORT ===== */
+        #viewport {
+            position: fixed; inset: 0; z-index: 1;
+            background: #000;
+        }
+        #webcam {
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            display: block;
+        }
+        .overlay-canvas {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+        }
+
+        /* ===== PARTICLE CANVAS ===== */
+        #particleCanvas {
+            position: fixed; inset: 0; z-index: 2;
+            pointer-events: none; opacity: 0.5;
+        }
+
+        /* ===== GESTURE LABEL ===== */
+        #gestureLabel {
+            position: fixed; top: 20px; left: 20px; z-index: 200;
+            padding: 10px 20px;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 50px;
+            backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem; letter-spacing: 1px;
+            display: flex; align-items: center; gap: 8px;
+            transition: var(--transition);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+        #gestureLabel .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--accent-cyan);
+            box-shadow: 0 0 8px var(--accent-cyan);
+            animation: dotPulse 1.5s ease-in-out infinite;
+        }
+        @keyframes dotPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* ===== SIDE PANEL ===== */
+        #sidePanel {
+            position: fixed; top: 0; right: 0; z-index: 100;
+            width: var(--panel-width); height: 100vh;
+            background: var(--glass-bg);
+            border-left: 1px solid var(--glass-border);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            overflow-y: auto; overflow-x: hidden;
+            padding: 20px 16px;
+            transition: transform var(--transition), opacity var(--transition);
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.1) transparent;
+        }
+        #sidePanel.hidden {
+            transform: translateX(100%); opacity: 0; pointer-events: none;
+        }
+        #sidePanel::-webkit-scrollbar { width: 4px; }
+        #sidePanel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+        .panel-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.1rem; font-weight: 700;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px; letter-spacing: 2px;
+        }
+
+        .section {
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--glass-border);
+        }
+        .section:last-child { border-bottom: none; }
+        .section-label {
+            font-size: 0.65rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 2px;
+            color: var(--text-secondary); margin-bottom: 10px;
+        }
+
+        /* ===== SIZE CONTROLS ===== */
+        .size-slider-wrap {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+        }
+        #strokeSlider {
+            flex: 1; -webkit-appearance: none; appearance: none;
+            height: 4px; border-radius: 4px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+            outline: none;
+        }
+        #strokeSlider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 16px; height: 16px;
+            border-radius: 50%; background: #fff;
+            box-shadow: 0 0 8px var(--accent-cyan);
+            cursor: pointer;
+        }
+        #strokeSlider::-moz-range-thumb {
+            width: 16px; height: 16px; border: none;
+            border-radius: 50%; background: #fff;
+            box-shadow: 0 0 8px var(--accent-cyan);
+            cursor: pointer;
+        }
+        #sizeValue {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.75rem; color: var(--accent-cyan);
+            min-width: 30px; text-align: right;
+        }
+        .size-presets {
+            display: flex; gap: 6px;
+        }
+        .size-preset {
+            flex: 1; padding: 7px 0;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px; color: var(--text-primary);
+            font-family: 'Orbitron', sans-serif; font-size: 0.65rem;
+            cursor: pointer; transition: var(--transition);
+            text-align: center; letter-spacing: 1px;
+        }
+        .size-preset:hover { background: rgba(0, 245, 255, 0.1); border-color: var(--accent-cyan); }
+        .size-preset.active {
+            background: rgba(0, 245, 255, 0.15);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+            box-shadow: 0 0 12px rgba(0, 245, 255, 0.2);
+        }
+
+        /* ===== COLOR PALETTE ===== */
+        .color-grid {
+            display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+        }
+        .color-swatch {
+            aspect-ratio: 1; border-radius: 10px;
+            border: 2px solid transparent;
+            cursor: pointer; transition: var(--transition);
+            position: relative;
+        }
+        .color-swatch:hover { transform: scale(1.15); }
+        .color-swatch.active {
+            border-color: #fff;
+            box-shadow: 0 0 14px currentColor;
+            transform: scale(1.1);
+        }
+        .color-swatch::after {
+            content: ''; position: absolute; inset: 2px;
+            border-radius: 8px; background: inherit;
+        }
+
+        /* ===== STYLE TOGGLES ===== */
+        .style-grid {
+            display: flex; flex-direction: column; gap: 6px;
+        }
+        .style-btn {
+            padding: 9px 14px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--glass-border);
+            border-radius: 10px; color: var(--text-primary);
+            font-size: 0.75rem; cursor: pointer;
+            transition: var(--transition);
+            display: flex; align-items: center; gap: 8px;
+        }
+        .style-btn:hover { background: rgba(255,255,255,0.06); }
+        .style-btn.active {
+            background: rgba(0, 245, 255, 0.1);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        .style-btn .style-icon { font-size: 1rem; }
+
+        /* ===== GESTURES GUIDE ===== */
+        .gesture-list { display: flex; flex-direction: column; gap: 5px; }
+        .gesture-item {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 0.7rem; color: var(--text-secondary);
+            padding: 5px 0;
+        }
+        .gesture-item .g-icon { font-size: 1.1rem; min-width: 28px; text-align: center; }
+        .gesture-item .g-action { color: var(--text-primary); font-weight: 500; }
+
+        /* ===== EXPORT BUTTONS ===== */
+        .export-btns { display: flex; flex-direction: column; gap: 8px; }
+        .export-btn {
+            padding: 10px 16px;
+            border-radius: 10px; cursor: pointer;
+            font-family: 'Inter', sans-serif; font-size: 0.75rem;
+            font-weight: 600; letter-spacing: 0.5px;
+            transition: var(--transition);
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        #saveBtn {
+            background: linear-gradient(135deg, rgba(0, 245, 255, 0.15), rgba(139, 92, 246, 0.15));
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            color: var(--accent-cyan);
+        }
+        #saveBtn:hover { box-shadow: 0 0 20px rgba(0, 245, 255, 0.2); }
+        #recordBtn {
+            background: linear-gradient(135deg, rgba(255, 45, 149, 0.15), rgba(255, 100, 50, 0.15));
+            border: 1px solid rgba(255, 45, 149, 0.3);
+            color: var(--accent-pink);
+        }
+        #recordBtn:hover { box-shadow: 0 0 20px rgba(255, 45, 149, 0.2); }
+        #recordBtn.recording {
+            animation: recPulse 1s ease-in-out infinite;
+            border-color: #ff3333;
+            color: #ff4444;
+        }
+        @keyframes recPulse {
+            0%, 100% { box-shadow: 0 0 10px rgba(255, 50, 50, 0.3); }
+            50% { box-shadow: 0 0 25px rgba(255, 50, 50, 0.6); }
+        }
+
+        /* ===== HOLOGRAM OVERLAY ===== */
+        #hologramOverlay {
+            position: fixed; inset: 0; z-index: 90;
+            pointer-events: none;
+            opacity: 0; transition: opacity 0.3s ease;
+        }
+        #hologramOverlay.active { opacity: 1; }
+
+        .holo-tint {
+            position: absolute; inset: 0;
+            background: rgba(0, 80, 255, 0.08);
+            mix-blend-mode: screen;
+        }
+
+        .holo-scanlines {
+            position: absolute; inset: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent 0px, transparent 2px,
+                rgba(0, 180, 255, 0.04) 2px, rgba(0, 180, 255, 0.04) 4px
+            );
+            animation: scanScroll 4s linear infinite;
+        }
+        @keyframes scanScroll {
+            0% { background-position-y: 0; }
+            100% { background-position-y: 100px; }
+        }
+
+        .holo-flicker {
+            position: absolute; inset: 0;
+            background: rgba(0, 150, 255, 0.03);
+            animation: flicker 0.15s infinite;
+        }
+        @keyframes flicker {
+            0% { opacity: 1; }
+            20% { opacity: 0.6; }
+            40% { opacity: 0.9; }
+            60% { opacity: 0.4; }
+            80% { opacity: 0.85; }
+            100% { opacity: 1; }
+        }
+
+        .holo-glitch-bar {
+            position: absolute; left: -5%; width: 110%;
+            height: 3px;
+            background: rgba(0, 200, 255, 0.25);
+            animation: glitchShift 0.3s infinite;
+        }
+        @keyframes glitchShift {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(-8px); }
+            50% { transform: translateX(5px); }
+            75% { transform: translateX(-3px); }
+            100% { transform: translateX(0); }
+        }
+
+        .holo-badge {
+            position: fixed; top: 70px; left: 20px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.7rem; letter-spacing: 3px;
+            color: var(--accent-cyan);
+            padding: 8px 18px;
+            background: rgba(0, 245, 255, 0.08);
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            border-radius: 6px;
+            animation: badgeBlink 0.8s ease-in-out infinite;
+            text-shadow: 0 0 10px var(--accent-cyan);
+        }
+        @keyframes badgeBlink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* ===== WIPE ANIMATION ===== */
+        #wipeOverlay {
+            position: fixed; inset: 0; z-index: 85;
+            pointer-events: none;
+            background: linear-gradient(90deg,
+                rgba(0, 245, 255, 0.3) 0%,
+                rgba(139, 92, 246, 0.2) 50%,
+                transparent 100%
+            );
+            transform: translateX(-110%);
+            transition: none;
+        }
+        #wipeOverlay.wiping {
+            animation: wipeAcross 0.7s ease-in-out forwards;
+        }
+        @keyframes wipeAcross {
+            0% { transform: translateX(-110%); }
+            100% { transform: translateX(110%); }
+        }
+
+        /* ===== RECORDING TIMER ===== */
+        #recTimer {
+            position: fixed; top: 20px; right: 310px; z-index: 200;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem; color: #ff4444;
+            padding: 8px 16px;
+            background: rgba(255, 50, 50, 0.1);
+            border: 1px solid rgba(255, 50, 50, 0.3);
+            border-radius: 50px;
+            backdrop-filter: blur(10px);
+            display: none; align-items: center; gap: 8px;
+        }
+        #recTimer.show { display: flex; }
+        #recTimer .rec-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #ff3333;
+            animation: recDotPulse 1s infinite;
+        }
+        @keyframes recDotPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.2; }
+        }
+
+        /* ===== SCROLLBAR FOR PANEL ===== */
+        #sidePanel::-webkit-scrollbar { width: 3px; }
+        #sidePanel::-webkit-scrollbar-track { background: transparent; }
+        #sidePanel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+
+        /* ===== MOBILE HINT ===== */
+        @media (max-width: 640px) {
+            :root { --panel-width: 240px; }
+            #sidePanel { padding: 14px 10px; }
+            .panel-title { font-size: 0.9rem; }
+            #gestureLabel { font-size: 0.65rem; padding: 8px 14px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loadingScreen">
+    <h1>AIRSCRIPT</h1>
+    <p>Initializing hand tracking…</p>
+    <div class="loader-bar"></div>
+</div>
+
+<!-- Error Overlay -->
+<div id="errorOverlay">
+    <div class="error-icon">⚠️</div>
+    <h2>TRACKING FAILED</h2>
+    <p id="errorMsg">MediaPipe could not be initialized. Please ensure your webcam is connected and you've granted camera permissions.</p>
+    <button id="retryBtn" onclick="location.reload()">RETRY</button>
+</div>
+
+<!-- Wipe Overlay -->
+<div id="wipeOverlay"></div>
+
+<!-- Hologram Overlay -->
+<div id="hologramOverlay">
+    <div class="holo-tint"></div>
+    <div class="holo-scanlines"></div>
+    <div class="holo-flicker"></div>
+    <div class="holo-glitch-bar" style="top:15%"></div>
+    <div class="holo-glitch-bar" style="top:42%; animation-delay:0.1s; height:2px;"></div>
+    <div class="holo-glitch-bar" style="top:67%; animation-delay:0.05s;"></div>
+    <div class="holo-glitch-bar" style="top:83%; animation-delay:0.15s; height:4px;"></div>
+    <div class="holo-badge">HOLOGRAM ACTIVE</div>
+</div>
+
+<!-- Main Viewport -->
+<div id="viewport">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="skeletonCanvas" class="overlay-canvas"></canvas>
+    <canvas id="drawingCanvas" class="overlay-canvas"></canvas>
+</div>
+
+<!-- Particle Background -->
+<canvas id="particleCanvas"></canvas>
+
+<!-- Gesture Label -->
+<div id="gestureLabel">
+    <span class="dot"></span>
+    <span id="gestureName">Waiting…</span>
+</div>
+
+<!-- Recording Timer -->
+<div id="recTimer">
+    <span class="rec-dot"></span>
+    <span id="recCountdown">10s</span>
+</div>
+
+<!-- Side Panel -->
+<div id="sidePanel">
+    <div class="panel-title">AIRSCRIPT</div>
+
+    <!-- Size Section -->
+    <div class="section">
+        <div class="section-label">Stroke Size</div>
+        <div class="size-slider-wrap">
+            <input type="range" id="strokeSlider" min="1" max="20" value="5">
+            <span id="sizeValue">5px</span>
+        </div>
+        <div class="size-presets">
+            <button class="size-preset" data-size="2" id="presetS">S</button>
+            <button class="size-preset active" data-size="5" id="presetM">M</button>
+            <button class="size-preset" data-size="10" id="presetL">L</button>
+            <button class="size-preset" data-size="18" id="presetXL">XL</button>
+        </div>
+    </div>
+
+    <!-- Color Section -->
+    <div class="section">
+        <div class="section-label">Color</div>
+        <div class="color-grid" id="colorGrid"></div>
+    </div>
+
+    <!-- Style Section -->
+    <div class="section">
+        <div class="section-label">Style</div>
+        <div class="style-grid" id="styleGrid"></div>
+    </div>
+
+    <!-- Gestures Guide -->
+    <div class="section">
+        <div class="section-label">Gestures</div>
+        <div class="gesture-list">
+            <div class="gesture-item">
+                <span class="g-icon">☝️</span>
+                <span><span class="g-action">Draw</span> — extend index finger</span>
+            </div>
+            <div class="gesture-item">
+                <span class="g-icon">✊</span>
+                <span><span class="g-action">Pen Up</span> — curl index finger</span>
+            </div>
+            <div class="gesture-item">
+                <span class="g-icon">👍</span>
+                <span><span class="g-action">Hologram</span> — thumbs up (hold 0.5s)</span>
+            </div>
+            <div class="gesture-item">
+                <span class="g-icon">🖐️</span>
+                <span><span class="g-action">Clear</span> — open palm</span>
+            </div>
+            <div class="gesture-item">
+                <span class="g-icon">✌️</span>
+                <span><span class="g-action">Undo</span> — peace sign</span>
+            </div>
+            <div class="gesture-item">
+                <span class="g-icon">🤏</span>
+                <span><span class="g-action">Toggle UI</span> — pinch</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Section -->
+    <div class="section">
+        <div class="section-label">Export</div>
+        <div class="export-btns">
+            <button class="export-btn" id="saveBtn">📸 Save as PNG</button>
+            <button class="export-btn" id="recordBtn">🔴 Record 10s Clip</button>
+        </div>
+    </div>
+</div>
+
+<!-- MediaPipe CDN Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+/* ============================================================
+   AIRSCRIPT — Main Application
+   ============================================================ */
+
+// ===== CONFIGURATION =====
+const COLORS = [
+    { name: 'Electric Cyan',  hex: '#00f5ff' },
+    { name: 'Hot Pink',       hex: '#ff2d95' },
+    { name: 'Lime Green',     hex: '#39ff14' },
+    { name: 'White',          hex: '#ffffff' },
+    { name: 'Gold',           hex: '#ffd700' },
+    { name: 'Red',            hex: '#ff3333' },
+    { name: 'Purple',         hex: '#b44dff' },
+    { name: 'Cyan',           hex: '#00e5ff' },
+    { name: 'Orange',         hex: '#ff6b2b' },
+    { name: 'Silver',         hex: '#c0c0c8' },
+];
+
+const STYLES = [
+    { id: 'normal',  label: 'Normal',  icon: '━' },
+    { id: 'glow',    label: 'Glow',    icon: '✦' },
+    { id: 'glitter', label: 'Glitter', icon: '✨' },
+    { id: 'rainbow', label: 'Rainbow', icon: '🌈' },
+    { id: 'dashed',  label: 'Dashed',  icon: '┅' },
+];
+
+const GESTURE_COOLDOWN = {
+    clear: 1500,
+    undo: 800,
+    toggleUI: 1000,
+};
+
+// ===== STATE =====
+const state = {
+    strokeColor: '#00f5ff',
+    strokeSize: 5,
+    strokeStyle: 'glow',
+    isDrawing: false,
+    currentStroke: null,
+    strokes: [],
+    panelVisible: true,
+    hologramActive: false,
+    thumbsUpStart: 0,
+    lastGestureTimes: { clear: 0, undo: 0, toggleUI: 0 },
+    lastGesture: 'none',
+    recording: false,
+    mediaRecorder: null,
+    recordedChunks: [],
+    recordTimer: null,
+    rainbowHue: 0,
+    particles: [],
+};
+
+// ===== DOM REFS =====
+const $ = (sel) => document.querySelector(sel);
+const webcam = $('#webcam');
+const skeletonCanvas = $('#skeletonCanvas');
+const drawingCanvas = $('#drawingCanvas');
+const particleCanvas = $('#particleCanvas');
+const skeletonCtx = skeletonCanvas.getContext('2d');
+const drawCtx = drawingCanvas.getContext('2d');
+const particleCtx = particleCanvas.getContext('2d');
+const gestureLabel = $('#gestureName');
+const gestureDot = $('.dot');
+const hologramOverlay = $('#hologramOverlay');
+const wipeOverlay = $('#wipeOverlay');
+const sidePanel = $('#sidePanel');
+const loadingScreen = $('#loadingScreen');
+const errorOverlay = $('#errorOverlay');
+const recTimerEl = $('#recTimer');
+const recCountdown = $('#recCountdown');
+
+// Offscreen buffer for completed strokes
+const bufferCanvas = document.createElement('canvas');
+const bufferCtx = bufferCanvas.getContext('2d');
+
+// Composite canvas for export/recording
+const compositeCanvas = document.createElement('canvas');
+const compositeCtx = compositeCanvas.getContext('2d');
+
+// ===== INITIALIZATION =====
+function init() {
+    buildColorGrid();
+    buildStyleGrid();
+    setupSlider();
+    setupPresets();
+    setupExportButtons();
+    initParticles();
+    animateParticles();
+
+    try {
+        initMediaPipe();
+    } catch(e) {
+        showError('Failed to initialize MediaPipe: ' + e.message);
+    }
+}
+
+// ===== UI BUILDERS =====
+function buildColorGrid() {
+    const grid = $('#colorGrid');
+    COLORS.forEach((c, i) => {
+        const swatch = document.createElement('div');
+        swatch.className = 'color-swatch' + (i === 0 ? ' active' : '');
+        swatch.style.background = c.hex;
+        swatch.style.color = c.hex;
+        swatch.title = c.name;
+        swatch.dataset.color = c.hex;
+        swatch.addEventListener('click', () => {
+            grid.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+            swatch.classList.add('active');
+            state.strokeColor = c.hex;
+        });
+        grid.appendChild(swatch);
+    });
+}
+
+function buildStyleGrid() {
+    const grid = $('#styleGrid');
+    STYLES.forEach(s => {
+        const btn = document.createElement('button');
+        btn.className = 'style-btn' + (s.id === 'glow' ? ' active' : '');
+        btn.dataset.style = s.id;
+        btn.innerHTML = `<span class="style-icon">${s.icon}</span> ${s.label}`;
+        btn.addEventListener('click', () => {
+            grid.querySelectorAll('.style-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.strokeStyle = s.id;
+        });
+        grid.appendChild(btn);
+    });
+}
+
+function setupSlider() {
+    const slider = $('#strokeSlider');
+    const display = $('#sizeValue');
+    slider.addEventListener('input', () => {
+        state.strokeSize = parseInt(slider.value);
+        display.textContent = slider.value + 'px';
+        updatePresetHighlight();
+    });
+}
+
+function setupPresets() {
+    document.querySelectorAll('.size-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const size = parseInt(btn.dataset.size);
+            state.strokeSize = size;
+            $('#strokeSlider').value = size;
+            $('#sizeValue').textContent = size + 'px';
+            updatePresetHighlight();
+        });
+    });
+}
+
+function updatePresetHighlight() {
+    const sizeMap = { 2: 'presetS', 5: 'presetM', 10: 'presetL', 18: 'presetXL' };
+    document.querySelectorAll('.size-preset').forEach(b => b.classList.remove('active'));
+    const id = sizeMap[state.strokeSize];
+    if (id) document.getElementById(id).classList.add('active');
+}
+
+// ===== EXPORT =====
+function setupExportButtons() {
+    $('#saveBtn').addEventListener('click', saveAsPNG);
+    $('#recordBtn').addEventListener('click', toggleRecording);
+}
+
+function saveAsPNG() {
+    const w = webcam.videoWidth, h = webcam.videoHeight;
+    compositeCanvas.width = w; compositeCanvas.height = h;
+    // Draw mirrored video frame
+    compositeCtx.save();
+    compositeCtx.translate(w, 0);
+    compositeCtx.scale(-1, 1);
+    compositeCtx.drawImage(webcam, 0, 0, w, h);
+    compositeCtx.restore();
+    // Draw the drawing canvas on top
+    compositeCtx.drawImage(bufferCanvas, 0, 0, w, h);
+    if (state.currentStroke) {
+        compositeCtx.drawImage(drawingCanvas, 0, 0, w, h);
+    }
+    // Download
+    const link = document.createElement('a');
+    link.download = 'airscript_' + Date.now() + '.png';
+    link.href = compositeCanvas.toDataURL('image/png');
+    link.click();
+}
+
+function toggleRecording() {
+    if (state.recording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+function startRecording() {
+    const w = webcam.videoWidth, h = webcam.videoHeight;
+    compositeCanvas.width = w; compositeCanvas.height = h;
+
+    const stream = compositeCanvas.captureStream(30);
+    state.mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
+    state.recordedChunks = [];
+
+    state.mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) state.recordedChunks.push(e.data); };
+    state.mediaRecorder.onstop = () => {
+        const blob = new Blob(state.recordedChunks, { type: 'video/webm' });
+        const link = document.createElement('a');
+        link.download = 'airscript_' + Date.now() + '.webm';
+        link.href = URL.createObjectURL(blob);
+        link.click();
+    };
+
+    state.mediaRecorder.start();
+    state.recording = true;
+    $('#recordBtn').classList.add('recording');
+    $('#recordBtn').innerHTML = '⏹ Recording…';
+    recTimerEl.classList.add('show');
+
+    let remaining = 10;
+    recCountdown.textContent = remaining + 's';
+    state.recordTimer = setInterval(() => {
+        remaining--;
+        recCountdown.textContent = remaining + 's';
+        if (remaining <= 0) stopRecording();
+    }, 1000);
+}
+
+function stopRecording() {
+    if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+        state.mediaRecorder.stop();
+    }
+    state.recording = false;
+    clearInterval(state.recordTimer);
+    $('#recordBtn').classList.remove('recording');
+    $('#recordBtn').innerHTML = '🔴 Record 10s Clip';
+    recTimerEl.classList.remove('show');
+}
+
+function updateCompositeFrame() {
+    if (!state.recording) return;
+    const w = compositeCanvas.width, h = compositeCanvas.height;
+    compositeCtx.clearRect(0, 0, w, h);
+    compositeCtx.save();
+    compositeCtx.translate(w, 0);
+    compositeCtx.scale(-1, 1);
+    compositeCtx.drawImage(webcam, 0, 0, w, h);
+    compositeCtx.restore();
+    compositeCtx.drawImage(bufferCanvas, 0, 0, w, h);
+    compositeCtx.drawImage(drawingCanvas, 0, 0, w, h);
+}
+
+// ===== PARTICLE BACKGROUND =====
+function initParticles() {
+    particleCanvas.width = window.innerWidth;
+    particleCanvas.height = window.innerHeight;
+    for (let i = 0; i < 50; i++) {
+        state.particles.push({
+            x: Math.random() * particleCanvas.width,
+            y: Math.random() * particleCanvas.height,
+            r: Math.random() * 1.5 + 0.5,
+            dx: (Math.random() - 0.5) * 0.3,
+            dy: (Math.random() - 0.5) * 0.3,
+            alpha: Math.random() * 0.4 + 0.1,
+            hue: Math.random() * 60 + 170, // cyan-purple range
+        });
+    }
+    window.addEventListener('resize', () => {
+        particleCanvas.width = window.innerWidth;
+        particleCanvas.height = window.innerHeight;
+    });
+}
+
+function animateParticles() {
+    const w = particleCanvas.width, h = particleCanvas.height;
+    particleCtx.clearRect(0, 0, w, h);
+    state.particles.forEach(p => {
+        p.x += p.dx; p.y += p.dy;
+        if (p.x < 0) p.x = w; if (p.x > w) p.x = 0;
+        if (p.y < 0) p.y = h; if (p.y > h) p.y = 0;
+        particleCtx.beginPath();
+        particleCtx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        particleCtx.fillStyle = `hsla(${p.hue}, 100%, 70%, ${p.alpha})`;
+        particleCtx.fill();
+    });
+    requestAnimationFrame(animateParticles);
+}
+
+// ===== GESTURE DETECTION =====
+function dist(a, b) {
+    return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+function isFingerExtended(lm, tipIdx, pipIdx) {
+    return lm[tipIdx].y < lm[pipIdx].y;
+}
+
+function isThumbExtended(lm) {
+    // Thumb tip (4) is farther from wrist (0) than thumb IP (3)
+    return dist(lm[4], lm[0]) > dist(lm[3], lm[0]) * 1.1;
+}
+
+function isThumbUp(lm) {
+    // Thumb tip above thumb MCP, all other fingers curled
+    const thumbUp = lm[4].y < lm[3].y && lm[4].y < lm[2].y;
+    const indexCurled = lm[8].y > lm[6].y;
+    const middleCurled = lm[12].y > lm[10].y;
+    const ringCurled = lm[16].y > lm[14].y;
+    const pinkyCurled = lm[20].y > lm[18].y;
+    return thumbUp && indexCurled && middleCurled && ringCurled && pinkyCurled;
+}
+
+function detectGesture(landmarks) {
+    const lm = landmarks;
+    const indexUp = isFingerExtended(lm, 8, 6);
+    const middleUp = isFingerExtended(lm, 12, 10);
+    const ringUp = isFingerExtended(lm, 16, 14);
+    const pinkyUp = isFingerExtended(lm, 20, 18);
+    const thumbUp = isThumbExtended(lm);
+
+    // 1. Open Palm — all 5 fingers extended
+    if (indexUp && middleUp && ringUp && pinkyUp && thumbUp) return 'openPalm';
+
+    // 2. Thumbs Up
+    if (isThumbUp(lm)) return 'thumbsUp';
+
+    // 3. Peace Sign — index + middle up, ring + pinky down
+    if (indexUp && middleUp && !ringUp && !pinkyUp) return 'peace';
+
+    // 4. Pinch — thumb tip close to index tip
+    if (dist(lm[4], lm[8]) < 0.055) return 'pinch';
+
+    // 5. Drawing — index up
+    if (indexUp) return 'drawing';
+
+    // 6. Pen Up
+    return 'penUp';
+}
+
+// ===== GESTURE LABELS =====
+const GESTURE_DISPLAY = {
+    drawing:   { text: '✏️ Drawing',   color: '#00f5ff' },
+    penUp:     { text: '✋ Pen Up',     color: '#888' },
+    thumbsUp:  { text: '👍 Hologram',   color: '#ffd700' },
+    openPalm:  { text: '🖐️ Clear',     color: '#ff2d95' },
+    peace:     { text: '✌️ Undo',      color: '#b44dff' },
+    pinch:     { text: '🤏 Toggle UI',  color: '#39ff14' },
+    none:      { text: '👀 Waiting…',   color: '#444' },
+};
+
+function updateGestureLabel(gesture) {
+    const info = GESTURE_DISPLAY[gesture] || GESTURE_DISPLAY.none;
+    gestureLabel.textContent = info.text;
+    gestureDot.style.background = info.color;
+    gestureDot.style.boxShadow = `0 0 8px ${info.color}`;
+}
+
+// ===== DRAWING ENGINE =====
+function mirrorX(x, w) {
+    return w - x;
+}
+
+function startStroke(x, y) {
+    state.isDrawing = true;
+    state.currentStroke = {
+        points: [{ x, y }],
+        color: state.strokeColor,
+        size: state.strokeSize,
+        style: state.strokeStyle,
+        rainbowHue: state.rainbowHue,
+    };
+}
+
+function continueStroke(x, y) {
+    if (!state.currentStroke) return;
+    state.currentStroke.points.push({ x, y });
+}
+
+function endStroke() {
+    if (state.currentStroke && state.currentStroke.points.length > 1) {
+        // Render completed stroke to buffer
+        renderStroke(bufferCtx, state.currentStroke);
+        state.strokes.push(state.currentStroke);
+    }
+    state.currentStroke = null;
+    state.isDrawing = false;
+}
+
+function renderStroke(ctx, stroke) {
+    const pts = stroke.points;
+    if (pts.length < 2) return;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = stroke.size;
+
+    // Style-specific rendering
+    switch (stroke.style) {
+        case 'glow':
+            ctx.shadowColor = stroke.color;
+            ctx.shadowBlur = stroke.size * 3;
+            ctx.strokeStyle = stroke.color;
+            drawBezierPath(ctx, pts);
+            // Double for extra glow
+            ctx.shadowBlur = stroke.size * 6;
+            ctx.globalAlpha = 0.4;
+            drawBezierPath(ctx, pts);
+            ctx.globalAlpha = 1;
+            break;
+
+        case 'glitter':
+            ctx.strokeStyle = stroke.color;
+            ctx.shadowColor = stroke.color;
+            ctx.shadowBlur = stroke.size * 2;
+            drawBezierPath(ctx, pts);
+            // Place sparkles
+            ctx.shadowBlur = 0;
+            for (let i = 0; i < pts.length; i += 2) {
+                const sparkleCount = 3;
+                for (let j = 0; j < sparkleCount; j++) {
+                    const sx = pts[i].x + (Math.random() - 0.5) * stroke.size * 4;
+                    const sy = pts[i].y + (Math.random() - 0.5) * stroke.size * 4;
+                    const sr = Math.random() * 2 + 0.5;
+                    ctx.fillStyle = `hsla(${Math.random() * 360}, 100%, 80%, ${Math.random() * 0.6 + 0.4})`;
+                    ctx.beginPath();
+                    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            break;
+
+        case 'rainbow':
+            // Draw segments with cycling hue
+            ctx.shadowBlur = stroke.size * 2;
+            for (let i = 1; i < pts.length; i++) {
+                const hue = (stroke.rainbowHue + i * 4) % 360;
+                ctx.strokeStyle = `hsl(${hue}, 100%, 60%)`;
+                ctx.shadowColor = ctx.strokeStyle;
+                ctx.beginPath();
+                ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+                ctx.lineTo(pts[i].x, pts[i].y);
+                ctx.stroke();
+            }
+            break;
+
+        case 'dashed':
+            ctx.setLineDash([stroke.size * 2, stroke.size]);
+            ctx.strokeStyle = stroke.color;
+            ctx.shadowColor = stroke.color;
+            ctx.shadowBlur = stroke.size;
+            drawBezierPath(ctx, pts);
+            ctx.setLineDash([]);
+            break;
+
+        default: // normal
+            ctx.strokeStyle = stroke.color;
+            drawBezierPath(ctx, pts);
+            break;
+    }
+    ctx.restore();
+}
+
+function drawBezierPath(ctx, pts) {
+    if (pts.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+
+    if (pts.length === 2) {
+        ctx.lineTo(pts[1].x, pts[1].y);
+    } else {
+        // Quadratic Bezier through midpoints for smoothing
+        for (let i = 1; i < pts.length - 1; i++) {
+            const midX = (pts[i].x + pts[i + 1].x) / 2;
+            const midY = (pts[i].y + pts[i + 1].y) / 2;
+            ctx.quadraticCurveTo(pts[i].x, pts[i].y, midX, midY);
+        }
+        // Connect to last point
+        const last = pts[pts.length - 1];
+        ctx.lineTo(last.x, last.y);
+    }
+    ctx.stroke();
+}
+
+function renderCurrentStroke() {
+    const w = drawingCanvas.width, h = drawingCanvas.height;
+    drawCtx.clearRect(0, 0, w, h);
+    // Draw buffer (completed strokes)
+    drawCtx.drawImage(bufferCanvas, 0, 0);
+    // Draw active stroke
+    if (state.currentStroke && state.currentStroke.points.length > 1) {
+        renderStroke(drawCtx, state.currentStroke);
+    }
+}
+
+function redrawAllStrokes() {
+    bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+    state.strokes.forEach(s => renderStroke(bufferCtx, s));
+}
+
+// ===== GESTURE ACTIONS =====
+function canTrigger(action) {
+    const now = Date.now();
+    if (now - state.lastGestureTimes[action] < GESTURE_COOLDOWN[action]) return false;
+    state.lastGestureTimes[action] = now;
+    return true;
+}
+
+function clearCanvas() {
+    if (!canTrigger('clear')) return;
+    // Trigger wipe animation
+    wipeOverlay.classList.remove('wiping');
+    void wipeOverlay.offsetWidth; // force reflow
+    wipeOverlay.classList.add('wiping');
+    setTimeout(() => {
+        state.strokes = [];
+        state.currentStroke = null;
+        state.isDrawing = false;
+        bufferCtx.clearRect(0, 0, bufferCanvas.width, bufferCanvas.height);
+        drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+    }, 350); // clear halfway through the wipe
+    setTimeout(() => wipeOverlay.classList.remove('wiping'), 750);
+}
+
+function undoStroke() {
+    if (!canTrigger('undo')) return;
+    if (state.strokes.length === 0) return;
+    state.strokes.pop();
+    redrawAllStrokes();
+}
+
+function togglePanel() {
+    if (!canTrigger('toggleUI')) return;
+    state.panelVisible = !state.panelVisible;
+    sidePanel.classList.toggle('hidden', !state.panelVisible);
+}
+
+function triggerHologram() {
+    if (state.hologramActive) return;
+    state.hologramActive = true;
+    hologramOverlay.classList.add('active');
+    // Randomize glitch bar positions
+    const bars = hologramOverlay.querySelectorAll('.holo-glitch-bar');
+    bars.forEach(bar => {
+        bar.style.top = Math.random() * 90 + '%';
+        bar.style.animationDuration = (0.1 + Math.random() * 0.3) + 's';
+    });
+    setTimeout(() => {
+        hologramOverlay.classList.remove('active');
+        state.hologramActive = false;
+        state.thumbsUpStart = 0;
+    }, 4000);
+}
+
+// ===== MEDIAPIPE =====
+let hands, camera;
+
+function initMediaPipe() {
+    hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.6,
+    });
+    hands.onResults(onResults);
+
+    navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+    }).then(stream => {
+        webcam.srcObject = stream;
+        webcam.onloadedmetadata = () => {
+            webcam.play();
+            const w = webcam.videoWidth, h = webcam.videoHeight;
+            skeletonCanvas.width = w; skeletonCanvas.height = h;
+            drawingCanvas.width = w; drawingCanvas.height = h;
+            bufferCanvas.width = w; bufferCanvas.height = h;
+            compositeCanvas.width = w; compositeCanvas.height = h;
+
+            camera = new Camera(webcam, {
+                onFrame: async () => { await hands.send({ image: webcam }); },
+                width: w, height: h,
+            });
+            camera.start().then(() => {
+                loadingScreen.classList.add('hidden');
+            }).catch(e => showError('Camera failed: ' + e.message));
+        };
+    }).catch(e => {
+        showError('Webcam access denied. ' + e.message);
+    });
+}
+
+function onResults(results) {
+    const w = skeletonCanvas.width, h = skeletonCanvas.height;
+
+    // Clear skeleton
+    skeletonCtx.clearRect(0, 0, w, h);
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+
+        // Draw hand skeleton (mirrored)
+        skeletonCtx.save();
+        skeletonCtx.translate(w, 0);
+        skeletonCtx.scale(-1, 1);
+        drawConnectors(skeletonCtx, landmarks, HAND_CONNECTIONS, { color: 'rgba(0, 245, 255, 0.3)', lineWidth: 2 });
+        drawLandmarks(skeletonCtx, landmarks, { color: 'rgba(0, 245, 255, 0.6)', lineWidth: 1, radius: 3 });
+        skeletonCtx.restore();
+
+        // Detect gesture
+        const gesture = detectGesture(landmarks);
+        updateGestureLabel(gesture);
+
+        // Fingertip position (mirrored)
+        const tip = landmarks[8];
+        const px = mirrorX(tip.x * w, w);
+        const py = tip.y * h;
+
+        // Handle gestures
+        const now = Date.now();
+
+        switch (gesture) {
+            case 'openPalm':
+                if (state.isDrawing) endStroke();
+                clearCanvas();
+                state.thumbsUpStart = 0;
+                break;
+
+            case 'thumbsUp':
+                if (state.isDrawing) endStroke();
+                if (state.thumbsUpStart === 0) {
+                    state.thumbsUpStart = now;
+                } else if (now - state.thumbsUpStart >= 500) {
+                    triggerHologram();
+                }
+                break;
+
+            case 'peace':
+                if (state.isDrawing) endStroke();
+                undoStroke();
+                state.thumbsUpStart = 0;
+                break;
+
+            case 'pinch':
+                if (state.isDrawing) endStroke();
+                togglePanel();
+                state.thumbsUpStart = 0;
+                break;
+
+            case 'drawing':
+                state.thumbsUpStart = 0;
+                if (!state.isDrawing) {
+                    startStroke(px, py);
+                } else {
+                    continueStroke(px, py);
+                    state.rainbowHue = (state.rainbowHue + 2) % 360;
+                    if (state.currentStroke && state.currentStroke.style === 'rainbow') {
+                        state.currentStroke.rainbowHue = state.rainbowHue;
+                    }
+                }
+                break;
+
+            case 'penUp':
+            default:
+                if (state.isDrawing) endStroke();
+                state.thumbsUpStart = 0;
+                break;
+        }
+
+        // Draw cursor dot at fingertip when drawing
+        if (gesture === 'drawing') {
+            drawCtx.save();
+            drawCtx.beginPath();
+            drawCtx.arc(px, py, state.strokeSize / 2 + 2, 0, Math.PI * 2);
+            drawCtx.fillStyle = state.strokeColor;
+            drawCtx.shadowColor = state.strokeColor;
+            drawCtx.shadowBlur = 12;
+            drawCtx.globalAlpha = 0.7;
+            drawCtx.fill();
+            drawCtx.restore();
+        }
+    } else {
+        // No hand detected
+        if (state.isDrawing) endStroke();
+        updateGestureLabel('none');
+        state.thumbsUpStart = 0;
+    }
+
+    // Render drawing canvas
+    renderCurrentStroke();
+
+    // Update composite for recording
+    updateCompositeFrame();
+}
+
+function showError(msg) {
+    loadingScreen.classList.add('hidden');
+    $('#errorMsg').textContent = msg;
+    errorOverlay.classList.add('show');
+}
+
+// ===== START =====
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
